@@ -11,10 +11,10 @@ const execPromise = promisify(exec);
 interface ApiConfig {
     port?: number;
     downloadDir?: string;
-    timeout?: number; // Timeout para la respuesta del servidor (en milisegundos)
+    timeout?: number;
     fileRetentionTimeSeconds?: number;
     cleanUpIntervalSeconds?: number;
-    maxDownloadSizeMB?: number; // Nuevo: Límite de tamaño de descarga en MB
+    maxDownloadSizeMB?: number;
 }
 
 class YoutubeDLPApi {
@@ -26,16 +26,16 @@ class YoutubeDLPApi {
     private fileRetentionTimeMs: number;
     private cleanUpIntervalMs: number;
     private cleanUpTimer: NodeJS.Timeout | null = null;
-    private maxDownloadSizeBytes: number; // Límite de tamaño de descarga en bytes
+    private maxDownloadSizeBytes: number;
 
     constructor(config?: ApiConfig) {
         this.app = express();
         this.port = config?.port || 3005;
         this.downloadDir = config?.downloadDir || path.join(__dirname, '..', 'downloads');
-        this.timeout = config?.timeout || 15 * 1000; // ¡Cambiado a 15 segundos!
+        this.timeout = config?.timeout || 15 * 1000; // 15 segundos
         this.fileRetentionTimeMs = (config?.fileRetentionTimeSeconds || 3600) * 1000;
         this.cleanUpIntervalMs = (config?.cleanUpIntervalSeconds || 600) * 1000;
-        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024; // ¡100 MB por defecto!
+        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024; // 100 MB por defecto
 
         this.configureMiddleware();
         this.setupRoutes();
@@ -60,9 +60,8 @@ class YoutubeDLPApi {
         this.app.post('/api/video-info', this.handleVideoInfo);
         this.app.post('/api/download', this.handleDownload);
 
-        // Middleware de manejo de errores genérico (opcional pero recomendado)
         this.app.use((err: any, req: Request, res: Response, next: Function) => {
-            if (res.headersSent) { // Si las cabeceras ya se enviaron, Express ya manejó la respuesta
+            if (res.headersSent) {
                 return next(err);
             }
             if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
@@ -112,18 +111,18 @@ class YoutubeDLPApi {
     }
 
     private handleDownload = async (req: Request, res: Response): Promise<void> => {
-        const { url, format } = req.body; // 'format' ahora es opcional en el cuerpo
+        const { url } = req.body;
 
         if (!url) {
             res.status(400).json({ error: 'La URL del video es requerida para la descarga.' });
             return;
         }
 
-        let selectedFormatCode: string;
+        let selectedFormatCode: string | null = null;
         let estimatedFileSize: number | undefined;
+        let requiresMuxing = false; // Bandera para saber si necesitamos FFmpeg
 
         try {
-            // Paso 1: Obtener la información completa del video para seleccionar el formato
             const { stdout: infoStdout, stderr: infoStderr } = await execPromise(`yt-dlp -j "${url}"`);
 
             if (infoStderr) {
@@ -135,54 +134,88 @@ class YoutubeDLPApi {
             const videoInfo = JSON.parse(infoStdout);
             const formats: any[] = videoInfo.formats || [];
 
-            // Filtrar formatos que no sean de video o que no tengan un tamaño estimado
-            const videoFormats = formats.filter(f =>
-                f.vcodec !== 'none' && f.filesize !== undefined || f.filesize_approx !== undefined
-            );
+            const allowedExtensions = ['mp4', 'webm'];
 
-            // Ordenar por calidad (mejor a peor) y luego por tamaño (para romper empates en calidad)
-            videoFormats.sort((a, b) => {
+            // 1. Intentar encontrar un formato combinado (video + audio) que cumpla los requisitos
+            const combinedFormats = formats.filter(f =>
+                f.vcodec !== 'none' && f.acodec !== 'none' && // Tiene video y audio
+                (f.filesize !== undefined || f.filesize_approx !== undefined) &&
+                allowedExtensions.includes(f.ext)
+            ).sort((a, b) => {
+                // Ordenar por calidad (mayor preferencia)
                 const aQuality = a.preference || 0;
                 const bQuality = b.preference || 0;
-                const aSize = a.filesize || a.filesize_approx || 0;
-                const bSize = b.filesize || b.filesize_approx || 0;
-
-                // Prioriza mejor calidad (mayor preferencia)
-                if (aQuality !== bQuality) {
-                    return bQuality - aQuality;
-                }
-                // Si la calidad es la misma, prioriza el tamaño (de mayor a menor para buscar el más grande apto)
-                return bSize - aSize;
+                if (aQuality !== bQuality) return bQuality - aQuality;
+                // Luego por tamaño (mayor a menor) para elegir el mejor dentro del límite
+                return (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0);
             });
 
-            // Seleccionar el formato más adecuado
-            let foundSuitableFormat = false;
-            for (const f of videoFormats) {
-                const size = f.filesize || f.filesize_approx; // Preferir filesize exacto
+            for (const f of combinedFormats) {
+                const size = f.filesize || f.filesize_approx;
                 if (size && size <= this.maxDownloadSizeBytes) {
                     selectedFormatCode = f.format_id;
                     estimatedFileSize = size;
-                    foundSuitableFormat = true;
-                    console.log(`Seleccionado formato ${selectedFormatCode} (estimado ${Math.round(size / (1024 * 1024))}MB) para cumplir límite.`);
-                    break; // Encontró el mejor formato que cumple con el tamaño
+                    requiresMuxing = false;
+                    console.log(`Seleccionado formato combinado ${selectedFormatCode} (${f.ext}, estimado ${Math.round(size / (1024 * 1024))}MB) que cumple el límite.`);
+                    break;
                 }
             }
 
-            if (!foundSuitableFormat) {
-                // Si no se encontró un formato que cumpla con el límite,
-                // revisamos si el formato más pequeño ya es demasiado grande.
-                const smallestFormat = videoFormats[videoFormats.length - 1]; // El último después de ordenar
-                if (smallestFormat && ((smallestFormat.filesize || smallestFormat.filesize_approx) > this.maxDownloadSizeBytes)) {
-                    res.status(413).json({
-                        error: `El video es demasiado grande. El formato más pequeño disponible (${Math.round((smallestFormat.filesize || smallestFormat.filesize_approx) / (1024 * 1024))}MB) excede el límite de ${this.maxDownloadSizeBytes / (1024 * 1024)}MB.`,
-                    });
-                    return;
+            // 2. Si no se encontró un formato combinado, intentar descargar video y audio por separado para muxing
+            if (!selectedFormatCode) {
+                console.log('No se encontró un formato combinado adecuado. Intentando descargar video y audio por separado para combinar.');
+
+                // Filtrar solo formatos de video (no 'none' en vcodec) y solo de audio (no 'none' en acodec)
+                const videoOnlyFormats = formats.filter(f =>
+                    f.vcodec !== 'none' && f.acodec === 'none' &&
+                    (f.filesize !== undefined || f.filesize_approx !== undefined) &&
+                    allowedExtensions.includes(f.ext) // Asegurar que sea una extensión válida para FFmpeg
+                ).sort((a, b) => {
+                    const aQuality = a.preference || 0;
+                    const bQuality = b.preference || 0;
+                    return bQuality - aQuality; // Mejor calidad de video
+                });
+
+                const audioOnlyFormats = formats.filter(f =>
+                    f.acodec !== 'none' && f.vcodec === 'none' &&
+                    (f.filesize !== undefined || f.filesize_approx !== undefined) &&
+                    allowedExtensions.includes(f.ext) // Generalmente audio será webm/m4a
+                ).sort((a, b) => {
+                    const aQuality = a.preference || 0;
+                    const bQuality = b.preference || 0;
+                    return bQuality - aQuality; // Mejor calidad de audio
+                });
+
+                const bestVideo = videoOnlyFormats[0];
+                const bestAudio = audioOnlyFormats[0];
+
+                if (bestVideo && bestAudio) {
+                    // Estimamos el tamaño combinado. Esto es una estimación, no exacto.
+                    const combinedSize = (bestVideo.filesize || bestVideo.filesize_approx || 0) +
+                        (bestAudio.filesize || bestAudio.filesize_approx || 0);
+
+                    if (combinedSize <= this.maxDownloadSizeBytes) {
+                        selectedFormatCode = `${bestVideo.format_id}+${bestAudio.format_id}`;
+                        estimatedFileSize = combinedSize;
+                        requiresMuxing = true;
+                        console.log(`Seleccionado video ${bestVideo.format_id} y audio ${bestAudio.format_id} (estimado total ${Math.round(combinedSize / (1024 * 1024))}MB) para combinar.`);
+                    } else {
+                        // Si incluso la mejor combinación excede el tamaño
+                        res.status(413).json({
+                            error: `El video es demasiado grande. La mejor combinación de video y audio (${Math.round(combinedSize / (1024 * 1024))}MB) excede el límite de ${this.maxDownloadSizeBytes / (1024 * 1024)}MB.`,
+                        });
+                        return;
+                    }
                 } else {
-                    // Esto puede pasar si no se encontró ningún formato de video con tamaño estimado,
-                    // o si la lógica de filtrado es muy restrictiva.
-                    res.status(500).json({ error: 'No se encontró un formato de video adecuado para descargar dentro del límite de tamaño.' });
+                    res.status(500).json({ error: 'No se encontraron formatos de video o audio válidos para combinar dentro del límite de tamaño y formatos MP4/WebM.' });
                     return;
                 }
+            }
+
+            if (!selectedFormatCode) {
+                // Esto ocurrirá si no se encontró ni un formato combinado ni una combinación para muxing.
+                res.status(500).json({ error: 'No se pudo encontrar un formato de video adecuado para descargar dentro del límite de tamaño y formatos MP4/WebM.' });
+                return;
             }
 
         } catch (error: unknown) {
@@ -197,17 +230,24 @@ class YoutubeDLPApi {
             return;
         }
 
-        // --- Paso 2: Iniciar la descarga con el formato seleccionado ---
+        // --- Inicio de la Descarga y/o Muxing ---
         const sanitizedUrl = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
         const timestamp = Date.now();
+        // El nombre de archivo de salida ahora debe ser MP4 para el muxing por defecto.
+        // Si quieres WebM, podrías necesitar una lógica más compleja o que el cliente lo pida.
         const outputFileName = `${sanitizedUrl}_${timestamp}.mp4`;
         const outputPath = path.join(this.downloadDir, outputFileName);
 
         const ytDlpArgs = [
-            '-f', selectedFormatCode!, // Usar el formato seleccionado
+            '-f', selectedFormatCode,
             '-o', outputPath,
             url
         ];
+
+        // Si necesitamos muxing, yt-dlp automáticamente usará ffmpeg si está en el PATH
+        // y se le pide un formato combinado (ej. 'bestvideo+bestaudio').
+        // No necesitamos invocar ffmpeg directamente aquí, yt-dlp lo hace por nosotros.
+        // Solo debemos asegurarnos de que yt-dlp tenga ffmpeg disponible.
 
         const ytDlpProcess = spawn('yt-dlp', ytDlpArgs);
 
@@ -231,7 +271,7 @@ class YoutubeDLPApi {
                     details: 'La operación de yt-dlp tardó demasiado y fue cancelada.'
                 });
             }
-        }, this.timeout); // Usamos el timeout configurado en la clase
+        }, this.timeout);
 
         ytDlpProcess.on('close', (code) => {
             clearTimeout(downloadTimeout);
@@ -243,7 +283,8 @@ class YoutubeDLPApi {
                         filePath: outputPath,
                         downloadUrl: `/downloads/${outputFileName}`,
                         estimatedSizeMB: estimatedFileSize ? Math.round(estimatedFileSize / (1024 * 1024)) : 'N/A',
-                        formatUsed: selectedFormatCode
+                        formatUsed: selectedFormatCode,
+                        muxedByFFmpeg: requiresMuxing // Indicador si se usó FFmpeg para combinar
                     });
                 } else {
                     console.error(`yt-dlp salió con código de error ${code} para ${url}.`);
@@ -259,10 +300,18 @@ class YoutubeDLPApi {
             clearTimeout(downloadTimeout);
             if (!res.headersSent) {
                 console.error('Error al ejecutar yt-dlp:', err);
-                res.status(500).json({
-                    error: 'Error al ejecutar yt-dlp. Asegúrate de que esté instalado y en tu PATH.',
-                    details: err.message
-                });
+                // Si el error es específicamente de ffmpeg (ej. no encontrado), podemos dar un mensaje más útil
+                if (err.message.includes('ffmpeg') && err.message.includes('not found')) {
+                    res.status(500).json({
+                        error: 'Error: FFmpeg no encontrado. Asegúrate de que FFmpeg esté instalado y en tu PATH para descargar videos con audio.',
+                        details: err.message
+                    });
+                } else {
+                    res.status(500).json({
+                        error: 'Error al ejecutar yt-dlp. Asegúrate de que esté instalado y en tu PATH.',
+                        details: err.message
+                    });
+                }
             }
         });
     }
@@ -343,9 +392,9 @@ class YoutubeDLPApi {
 // Uso de la clase:
 const api = new YoutubeDLPApi({
     port: 3005,
-    timeout: 15 * 1000, // Timeout de respuesta de 15 segundos
-    fileRetentionTimeSeconds: 3600, // 1 hora
-    cleanUpIntervalSeconds: 600, // Cada 10 minutos
-    maxDownloadSizeMB: 100 // Límite de descarga de 100 MB
+    timeout: 15 * 1000,
+    fileRetentionTimeSeconds: 3600,
+    cleanUpIntervalSeconds: 600,
+    maxDownloadSizeMB: 100
 });
 api.start();
