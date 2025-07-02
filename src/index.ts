@@ -32,10 +32,10 @@ class YoutubeDLPApi {
         this.app = express();
         this.port = config?.port || 3005;
         this.downloadDir = config?.downloadDir || path.join(__dirname, '..', 'downloads');
-        this.timeout = config?.timeout || 15 * 1000; // 15 segundos
-        this.fileRetentionTimeMs = (config?.fileRetentionTimeSeconds || 3600) * 1000;
-        this.cleanUpIntervalMs = (config?.cleanUpIntervalSeconds || 600) * 1000;
-        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024; // 100 MB por defecto
+        this.timeout = config?.timeout || 15 * 1000; // 15 seconds
+        this.fileRetentionTimeMs = (config?.fileRetentionTimeSeconds || 3600) * 1000; // Default to 1 hour
+        this.cleanUpIntervalMs = (config?.cleanUpIntervalSeconds || 600) * 1000; // Default to 10 minutes
+        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024; // Default to 100 MB
 
         this.configureMiddleware();
         this.setupRoutes();
@@ -51,7 +51,7 @@ class YoutubeDLPApi {
     private ensureDownloadDirectoryExists(): void {
         if (!fs.existsSync(this.downloadDir)) {
             fs.mkdirSync(this.downloadDir, { recursive: true });
-            console.log(`Directorio de descargas creado: ${this.downloadDir}`);
+            console.log(`Download directory created: ${this.downloadDir}`);
         }
     }
 
@@ -60,26 +60,27 @@ class YoutubeDLPApi {
         this.app.post('/api/video-info', this.handleVideoInfo);
         this.app.post('/api/download', this.handleDownload);
 
+        // Generic error handling middleware
         this.app.use((err: any, req: Request, res: Response, next: Function) => {
             if (res.headersSent) {
                 return next(err);
             }
             if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') {
                 console.error(`Request timeout for ${req.path}`);
-                return res.status(503).json({ error: 'La solicitud ha excedido el tiempo de espera.' });
+                return res.status(503).json({ error: 'The request has exceeded the time limit.' });
             }
-            console.error('Error no capturado:', err);
-            res.status(500).json({ error: 'Error interno del servidor.', details: err.message || err });
+            console.error('Unhandled error:', err);
+            res.status(500).json({ error: 'Internal server error.', details: err.message || err });
         });
     }
 
     private handleRoot = (req: Request, res: Response): void => {
-        res.send('API de yt-dlp funcionando!');
+        res.send('yt-dlp API is running!');
     }
 
     private handleVideoInfo = async (req: Request, res: Response): Promise<void> => {
         if (!req.body?.url) {
-            res.status(400).json({ error: 'La URL del video es requerida' });
+            res.status(400).json({ error: 'Video URL is required' });
             return;
         }
         const { url } = req.body;
@@ -88,8 +89,8 @@ class YoutubeDLPApi {
             const { stdout, stderr } = await execPromise(`yt-dlp -j "${url}"`);
 
             if (stderr) {
-                console.error(`Error de yt-dlp al obtener información: ${stderr}`);
-                res.status(500).json({ error: 'No se pudo obtener la información del video.', details: stderr });
+                console.error(`yt-dlp error getting info: ${stderr}`);
+                res.status(500).json({ error: 'Could not retrieve video information.', details: stderr });
                 return;
             }
 
@@ -98,14 +99,14 @@ class YoutubeDLPApi {
             return;
 
         } catch (error: unknown) {
-            let errorMessage = 'Error interno del servidor.';
+            let errorMessage = 'Internal server error.';
             if (error instanceof Error) {
                 errorMessage = error.message;
-                console.error(`Error al ejecutar el comando yt-dlp para información: ${error.message}`);
+                console.error(`Error executing yt-dlp command for info: ${error.message}`);
             } else {
-                console.error(`Error desconocido al ejecutar el comando yt-dlp: ${error}`);
+                console.error(`Unknown error executing yt-dlp command: ${error}`);
             }
-            res.status(500).json({ error: 'Error interno del servidor al obtener información.', details: errorMessage });
+            res.status(500).json({ error: 'Internal server error when getting info.', details: errorMessage });
             return;
         }
     }
@@ -114,20 +115,20 @@ class YoutubeDLPApi {
         const { url } = req.body;
 
         if (!url) {
-            res.status(400).json({ error: 'La URL del video es requerida para la descarga.' });
+            res.status(400).json({ error: 'Video URL is required for download.' });
             return;
         }
 
         let selectedFormatCode: string | null = null;
         let estimatedFileSize: number | undefined;
-        let requiresMuxing = false; // Bandera para saber si necesitamos FFmpeg
+        let requiresMuxing = false; // Flag to indicate if FFmpeg muxing is needed
 
         try {
             const { stdout: infoStdout, stderr: infoStderr } = await execPromise(`yt-dlp -j "${url}"`);
 
             if (infoStderr) {
-                console.error(`Error de yt-dlp al obtener info para selección de formato: ${infoStderr}`);
-                res.status(500).json({ error: 'No se pudo obtener la información del video para selección de formato.', details: infoStderr });
+                console.error(`yt-dlp error getting info for format selection: ${infoStderr}`);
+                res.status(500).json({ error: 'Could not retrieve video information for format selection.', details: infoStderr });
                 return;
             }
 
@@ -136,17 +137,17 @@ class YoutubeDLPApi {
 
             const allowedExtensions = ['mp4', 'webm'];
 
-            // 1. Intentar encontrar un formato combinado (video + audio) que cumpla los requisitos
+            // 1. Try to find a combined format (video + audio) that meets the requirements
             const combinedFormats = formats.filter(f =>
-                f.vcodec !== 'none' && f.acodec !== 'none' && // Tiene video y audio
-                (f.filesize !== undefined || f.filesize_approx !== undefined) &&
-                allowedExtensions.includes(f.ext)
+                f.vcodec !== 'none' && f.acodec !== 'none' && // Has both video and audio
+                (f.filesize !== undefined || f.filesize_approx !== undefined) && // Has estimated size
+                allowedExtensions.includes(f.ext) // Is an allowed extension
             ).sort((a, b) => {
-                // Ordenar por calidad (mayor preferencia)
+                // Sort by quality (higher preference first)
                 const aQuality = a.preference || 0;
                 const bQuality = b.preference || 0;
                 if (aQuality !== bQuality) return bQuality - aQuality;
-                // Luego por tamaño (mayor a menor) para elegir el mejor dentro del límite
+                // Then by size (larger to smaller) to pick the best within the limit
                 return (b.filesize || b.filesize_approx || 0) - (a.filesize || a.filesize_approx || 0);
             });
 
@@ -156,41 +157,42 @@ class YoutubeDLPApi {
                     selectedFormatCode = f.format_id;
                     estimatedFileSize = size;
                     requiresMuxing = false;
-                    console.log(`Seleccionado formato combinado ${selectedFormatCode} (${f.ext}, estimado ${Math.round(size / (1024 * 1024))}MB) que cumple el límite.`);
+                    console.log(`Selected combined format ${selectedFormatCode} (${f.ext}, estimated ${Math.round(size / (1024 * 1024))}MB) that meets the limit.`);
                     break;
                 }
             }
 
-            // 2. Si no se encontró un formato combinado, intentar descargar video y audio por separado para muxing
+            // 2. If no suitable combined format was found, try to download video and audio separately for muxing
             if (!selectedFormatCode) {
-                console.log('No se encontró un formato combinado adecuado. Intentando descargar video y audio por separado para combinar.');
+                console.log('No suitable combined format found. Attempting to download video and audio separately for merging.');
 
-                // Filtrar solo formatos de video (no 'none' en vcodec) y solo de audio (no 'none' en acodec)
+                // Filter for video-only formats (vcodec not 'none', acodec is 'none')
                 const videoOnlyFormats = formats.filter(f =>
                     f.vcodec !== 'none' && f.acodec === 'none' &&
                     (f.filesize !== undefined || f.filesize_approx !== undefined) &&
-                    allowedExtensions.includes(f.ext) // Asegurar que sea una extensión válida para FFmpeg
+                    allowedExtensions.includes(f.ext) // Ensure it's a valid extension for FFmpeg
                 ).sort((a, b) => {
                     const aQuality = a.preference || 0;
                     const bQuality = b.preference || 0;
-                    return bQuality - aQuality; // Mejor calidad de video
+                    return bQuality - aQuality; // Better video quality first
                 });
 
+                // Filter for audio-only formats (acodec not 'none', vcodec is 'none')
                 const audioOnlyFormats = formats.filter(f =>
                     f.acodec !== 'none' && f.vcodec === 'none' &&
                     (f.filesize !== undefined || f.filesize_approx !== undefined) &&
-                    allowedExtensions.includes(f.ext) // Generalmente audio será webm/m4a
+                    allowedExtensions.includes(f.ext) // Typically audio will be webm/m4a
                 ).sort((a, b) => {
                     const aQuality = a.preference || 0;
                     const bQuality = b.preference || 0;
-                    return bQuality - aQuality; // Mejor calidad de audio
+                    return bQuality - aQuality; // Better audio quality first
                 });
 
                 const bestVideo = videoOnlyFormats[0];
                 const bestAudio = audioOnlyFormats[0];
 
                 if (bestVideo && bestAudio) {
-                    // Estimamos el tamaño combinado. Esto es una estimación, no exacto.
+                    // Estimate the combined size. This is an approximation, not exact.
                     const combinedSize = (bestVideo.filesize || bestVideo.filesize_approx || 0) +
                         (bestAudio.filesize || bestAudio.filesize_approx || 0);
 
@@ -198,43 +200,43 @@ class YoutubeDLPApi {
                         selectedFormatCode = `${bestVideo.format_id}+${bestAudio.format_id}`;
                         estimatedFileSize = combinedSize;
                         requiresMuxing = true;
-                        console.log(`Seleccionado video ${bestVideo.format_id} y audio ${bestAudio.format_id} (estimado total ${Math.round(combinedSize / (1024 * 1024))}MB) para combinar.`);
+                        console.log(`Selected video ${bestVideo.format_id} and audio ${bestAudio.format_id} (estimated total ${Math.round(combinedSize / (1024 * 1024))}MB) for merging.`);
                     } else {
-                        // Si incluso la mejor combinación excede el tamaño
+                        // If even the best combination exceeds the size limit
                         res.status(413).json({
-                            error: `El video es demasiado grande. La mejor combinación de video y audio (${Math.round(combinedSize / (1024 * 1024))}MB) excede el límite de ${this.maxDownloadSizeBytes / (1024 * 1024)}MB.`,
+                            error: `The video is too large. The best video and audio combination (${Math.round(combinedSize / (1024 * 1024))}MB) exceeds the limit of ${this.maxDownloadSizeBytes / (1024 * 1024)}MB.`,
                         });
                         return;
                     }
                 } else {
-                    res.status(500).json({ error: 'No se encontraron formatos de video o audio válidos para combinar dentro del límite de tamaño y formatos MP4/WebM.' });
+                    res.status(500).json({ error: 'No valid video or audio formats found for merging within the size limit and MP4/WebM formats.' });
                     return;
                 }
             }
 
             if (!selectedFormatCode) {
-                // Esto ocurrirá si no se encontró ni un formato combinado ni una combinación para muxing.
-                res.status(500).json({ error: 'No se pudo encontrar un formato de video adecuado para descargar dentro del límite de tamaño y formatos MP4/WebM.' });
+                // This will happen if neither a combined format nor a muxing combination was found.
+                res.status(500).json({ error: 'Could not find a suitable video format to download within the size limit and MP4/WebM formats.' });
                 return;
             }
 
         } catch (error: unknown) {
-            let errorMessage = 'Error interno al seleccionar el formato del video.';
+            let errorMessage = 'Internal error when selecting video format.';
             if (error instanceof Error) {
                 errorMessage = error.message;
-                console.error(`Error al obtener info o seleccionar formato: ${error.message}`);
+                console.error(`Error getting info or selecting format: ${error.message}`);
             } else {
-                console.error(`Error desconocido al seleccionar formato: ${error}`);
+                console.error(`Unknown error when selecting format: ${error}`);
             }
             res.status(500).json({ error: errorMessage });
             return;
         }
 
-        // --- Inicio de la Descarga y/o Muxing ---
+        // --- Start Download and/or Muxing ---
         const sanitizedUrl = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
         const timestamp = Date.now();
-        // El nombre de archivo de salida ahora debe ser MP4 para el muxing por defecto.
-        // Si quieres WebM, podrías necesitar una lógica más compleja o que el cliente lo pida.
+        // The output file name should be MP4 by default for muxing.
+        // If you need WebM, you might need more complex logic or for the client to request it.
         const outputFileName = `${sanitizedUrl}_${timestamp}.mp4`;
         const outputPath = path.join(this.downloadDir, outputFileName);
 
@@ -244,10 +246,10 @@ class YoutubeDLPApi {
             url
         ];
 
-        // Si necesitamos muxing, yt-dlp automáticamente usará ffmpeg si está en el PATH
-        // y se le pide un formato combinado (ej. 'bestvideo+bestaudio').
-        // No necesitamos invocar ffmpeg directamente aquí, yt-dlp lo hace por nosotros.
-        // Solo debemos asegurarnos de que yt-dlp tenga ffmpeg disponible.
+        // If muxing is required, yt-dlp will automatically use ffmpeg if it's in the PATH
+        // and a combined format (e.g., 'bestvideo+bestaudio') is requested.
+        // We don't need to invoke ffmpeg directly here; yt-dlp handles it for us.
+        // We just need to ensure ffmpeg is available to yt-dlp.
 
         const ytDlpProcess = spawn('yt-dlp', ytDlpArgs);
 
@@ -265,10 +267,10 @@ class YoutubeDLPApi {
         const downloadTimeout = setTimeout(() => {
             ytDlpProcess.kill('SIGKILL');
             if (!res.headersSent) {
-                console.error(`Descarga de ${url} excedió el tiempo límite y fue terminada.`);
+                console.error(`Download of ${url} exceeded time limit and was terminated.`);
                 res.status(504).json({
-                    error: 'La descarga del video excedió el tiempo límite.',
-                    details: 'La operación de yt-dlp tardó demasiado y fue cancelada.'
+                    error: 'Video download exceeded time limit.',
+                    details: 'The yt-dlp operation took too long and was canceled.'
                 });
             }
         }, this.timeout);
@@ -277,19 +279,19 @@ class YoutubeDLPApi {
             clearTimeout(downloadTimeout);
             if (!res.headersSent) {
                 if (code === 0) {
-                    console.log(`Descarga completada para ${url}. Guardado en: ${outputPath}`);
+                    console.log(`Download completed for ${url}. Saved to: ${outputPath}`);
                     res.status(200).json({
-                        message: 'Descarga iniciada y completada con éxito.',
+                        message: 'Download initiated and completed successfully.',
                         filePath: outputPath,
                         downloadUrl: `/downloads/${outputFileName}`,
                         estimatedSizeMB: estimatedFileSize ? Math.round(estimatedFileSize / (1024 * 1024)) : 'N/A',
                         formatUsed: selectedFormatCode,
-                        muxedByFFmpeg: requiresMuxing // Indicador si se usó FFmpeg para combinar
+                        muxedByFFmpeg: requiresMuxing // Indicator if FFmpeg was used for merging
                     });
                 } else {
-                    console.error(`yt-dlp salió con código de error ${code} para ${url}.`);
+                    console.error(`yt-dlp exited with error code ${code} for ${url}.`);
                     res.status(500).json({
-                        error: 'Error al descargar el video.',
+                        error: 'Error downloading video.',
                         details: stderrOutput || `yt-dlp exited with code ${code}.`
                     });
                 }
@@ -299,16 +301,16 @@ class YoutubeDLPApi {
         ytDlpProcess.on('error', (err) => {
             clearTimeout(downloadTimeout);
             if (!res.headersSent) {
-                console.error('Error al ejecutar yt-dlp:', err);
-                // Si el error es específicamente de ffmpeg (ej. no encontrado), podemos dar un mensaje más útil
+                console.error('Error executing yt-dlp:', err);
+                // If the error is specifically about ffmpeg (e.g., not found), provide a more helpful message
                 if (err.message.includes('ffmpeg') && err.message.includes('not found')) {
                     res.status(500).json({
-                        error: 'Error: FFmpeg no encontrado. Asegúrate de que FFmpeg esté instalado y en tu PATH para descargar videos con audio.',
+                        error: 'Error: FFmpeg not found. Ensure FFmpeg is installed and in your PATH to download videos with audio.',
                         details: err.message
                     });
                 } else {
                     res.status(500).json({
-                        error: 'Error al ejecutar yt-dlp. Asegúrate de que esté instalado y en tu PATH.',
+                        error: 'Error executing yt-dlp. Ensure it is installed and in your PATH.',
                         details: err.message
                     });
                 }
@@ -317,12 +319,12 @@ class YoutubeDLPApi {
     }
 
     private cleanUpOldFiles(): void {
-        console.log(`[${new Date().toLocaleString()}] Iniciando limpieza de archivos antiguos en: ${this.downloadDir}`);
+        console.log(`[${new Date().toLocaleString()}] Starting cleanup of old files in: ${this.downloadDir}`);
         const now = Date.now();
 
         fs.readdir(this.downloadDir, (err, files) => {
             if (err) {
-                console.error('Error al leer el directorio de descargas para limpieza:', err);
+                console.error('Error reading download directory for cleanup:', err);
                 return;
             }
 
@@ -330,7 +332,7 @@ class YoutubeDLPApi {
                 const filePath = path.join(this.downloadDir, file);
                 fs.stat(filePath, (err, stats) => {
                     if (err) {
-                        console.error(`Error al obtener estadísticas del archivo ${filePath}:`, err);
+                        console.error(`Error getting file stats for ${filePath}:`, err);
                         return;
                     }
 
@@ -339,34 +341,34 @@ class YoutubeDLPApi {
                     if (fileAge > this.fileRetentionTimeMs) {
                         fs.unlink(filePath, unlinkErr => {
                             if (unlinkErr) {
-                                console.error(`Error al eliminar el archivo antiguo ${filePath}:`, unlinkErr);
+                                console.error(`Error deleting old file ${filePath}:`, unlinkErr);
                             } else {
-                                console.log(`Archivo antiguo eliminado: ${filePath} (Edad: ${(fileAge / 1000 / 60).toFixed(2)} minutos)`);
+                                console.log(`Old file deleted: ${filePath} (Age: ${(fileAge / 1000 / 60).toFixed(2)} minutes)`);
                             }
                         });
                     }
                 });
             });
-            console.log(`[${new Date().toLocaleString()}] Limpieza de archivos finalizada.`);
+            console.log(`[${new Date().toLocaleString()}] File cleanup finished.`);
         });
     }
 
     public start(): void {
         this.server = this.app.listen(this.port, () => {
-            console.log(`Servidor corriendo en http://localhost:${this.port}`);
-            console.log(`Tiempo de retención de archivos: ${this.fileRetentionTimeMs / 1000 / 60} minutos.`);
-            console.log(`Intervalo de limpieza: ${this.cleanUpIntervalMs / 1000 / 60} minutos.`);
-            console.log(`Límite de tamaño de descarga: ${this.maxDownloadSizeBytes / (1024 * 1024)} MB.`);
+            console.log(`Server running on http://localhost:${this.port}`);
+            console.log(`File retention time: ${this.fileRetentionTimeMs / 1000 / 60} minutes.`);
+            console.log(`Cleanup interval: ${this.cleanUpIntervalMs / 1000 / 60} minutes.`);
+            console.log(`Download size limit: ${this.maxDownloadSizeBytes / (1024 * 1024)} MB.`);
         });
 
         this.server.timeout = this.timeout;
-        console.log(`Timeout global del servidor configurado a ${this.timeout / 1000} segundos.`);
+        console.log(`Global server timeout set to ${this.timeout / 1000} seconds.`);
 
         this.server.on('request', (req: Request, res: Response) => {
             res.setTimeout(this.timeout, () => {
                 if (!res.headersSent) {
-                    console.warn(`Timeout de respuesta para la ruta: ${req.url}`);
-                    res.status(503).json({ error: 'La solicitud ha excedido el tiempo de espera.' });
+                    console.warn(`Response timeout for route: ${req.url}`);
+                    res.status(503).json({ error: 'The request has exceeded the time limit.' });
                 }
             });
         });
@@ -377,19 +379,19 @@ class YoutubeDLPApi {
     public close(): void {
         if (this.server) {
             this.server.close(() => {
-                console.log('Servidor Express cerrado.');
+                console.log('Express server closed.');
             });
         }
         if (this.cleanUpTimer) {
             clearInterval(this.cleanUpTimer);
-            console.log('Temporizador de limpieza de archivos detenido.');
+            console.log('File cleanup timer stopped.');
         }
     }
 }
 
 // ---
 
-// Uso de la clase:
+// Class Usage:
 const api = new YoutubeDLPApi({
     port: 3005,
     timeout: 15 * 1000,

@@ -1,95 +1,95 @@
-# 🎥 API de Descarga de Videos con yt-dlp y FFmpeg
+# 🎥 Video Download API with yt-dlp and FFmpeg
 
-Esta es una API Node.js/Express robusta que te permite obtener información y descargar videos de diversas plataformas (principalmente YouTube) utilizando `yt-dlp` y `FFmpeg`. La API está diseñada para gestionar el tamaño de los archivos, priorizar la calidad, asegurar la inclusión de audio y limpiar los archivos temporales.
-
------
-
-## 🌟 Características Principales
-
-  * **Obtención de Información de Videos**: Consulta detalles completos de cualquier video compatible.
-  * **Descarga Inteligente de Videos**:
-      * Prioriza la **mejor calidad** disponible.
-      * **Límite de Tamaño Configurable**: Descarga videos hasta un tamaño máximo (por defecto 100 MB), degradando la calidad si es necesario para cumplir el límite.
-      * **Audio Incluido**: Si el formato de mejor calidad viene sin audio, la API descargará el video y audio por separado, y usará `FFmpeg` para combinarlos automáticamente.
-      * Soporte para formatos **MP4 y WebM**.
-  * **Gestión de Archivos Temporales**: Los videos descargados se eliminan automáticamente después de un tiempo configurable (por defecto 1 hora).
-  * **Timeouts Robusto**: Manejo de timeouts para evitar que las solicitudes se queden colgadas.
+This is a robust Node.js/Express API that allows you to fetch information and download videos from various platforms (primarily YouTube) using `yt-dlp` and `FFmpeg`. The API is designed to manage file size, prioritize quality, ensure audio inclusion, and clean up temporary files.
 
 -----
 
-## 🚀 Cómo Empezar
+## 🌟 Key Features
 
-Sigue estos pasos para configurar y ejecutar la API en tu entorno local.
+  * **Video Information Retrieval**: Get comprehensive details for any compatible video.
+  * **Intelligent Video Download**:
+      * Prioritizes the **best available quality**.
+      * **Configurable Size Limit**: Downloads videos up to a maximum size (default 100 MB), degrading quality if necessary to meet the limit.
+      * **Audio Included**: If the best quality format comes without audio, the API will download video and audio tracks separately and automatically use `FFmpeg` to combine them.
+      * Supports **MP4 and WebM** formats.
+  * **Temporary File Management**: Downloaded videos are automatically deleted after a configurable period (default 1 hour).
+  * **Robust Timeouts**: Handles timeouts to prevent requests from hanging.
 
-### 📋 Prerrequisitos
+-----
 
-Necesitas tener instalados los siguientes programas en tu sistema y accesibles desde el `PATH`:
+## 🚀 Getting Started
 
-  * **Node.js** (versión 18 o superior recomendada)
-  * **npm** (viene con Node.js)
-  * **yt-dlp**: Una herramienta de línea de comandos para descargar videos.
-      * [Guía de instalación de yt-dlp](https://www.google.com/search?q=https://github.com/yt-dlp/yt-dlp%23installation)
-  * **FFmpeg**: Una solución completa para grabar, convertir y hacer streaming de audio y video. Necesario para combinar pistas de video y audio.
-      * [Guía de instalación de FFmpeg](https://ffmpeg.org/download.html)
+Follow these steps to set up and run the API in your local environment.
 
-### ⚙️ Instalación
+### 📋 Prerequisites
 
-1.  **Clona este repositorio** (o copia los archivos de la API a tu máquina):
+You need to have the following software installed on your system and accessible via your system's `PATH`:
+
+  * **Node.js** (version 18 or higher recommended)
+  * **npm** (comes with Node.js)
+  * **yt-dlp**: A command-line program to download videos.
+      * [yt-dlp Installation Guide](https://www.google.com/search?q=https://github.com/yt-dlp/yt-dlp%23installation)
+  * **FFmpeg**: A complete, cross-platform solution to record, convert and stream audio and video. Required for combining video and audio tracks.
+      * [FFmpeg Download & Installation Guide](https://ffmpeg.org/download.html)
+
+### ⚙️ Installation
+
+1.  **Clone this repository** (or copy the API files to your machine):
     ```bash
-    git clone <URL_DEL_REPOSITORIO>
-    cd <nombre_de_tu_proyecto>
+    git clone <REPOSITORY_URL>
+    cd <your_project_name>
     ```
-2.  **Instala las dependencias de Node.js**:
+2.  **Install Node.js dependencies**:
     ```bash
     npm install
     ```
-    Si usas `yarn`:
+    If you use `yarn`:
     ```bash
     yarn install
     ```
 
 -----
 
-## ▶️ Ejecución de la API
+## ▶️ Running the API
 
-Para iniciar el servidor de la API:
+To start the API server:
 
 ```bash
 npm start
 ```
 
-O, para desarrollo con recarga en caliente (si usas `ts-node-dev` o similar):
+Or, for development with hot reloading (if you use `ts-node-dev` or similar):
 
 ```bash
 npm run dev
 ```
 
-La API se iniciará por defecto en `http://localhost:3005`.
+The API will start by default on `http://localhost:3005`.
 
 -----
 
-## 🌐 Endpoints de la API
+## 🌐 API Endpoints
 
-La API expone los siguientes endpoints:
+The API exposes the following endpoints:
 
 ### `GET /`
 
-  * **Descripción**: Verifica que la API está funcionando.
-  * **Respuesta Exitosa**:
+  * **Description**: Checks if the API is running.
+  * **Success Response**:
     ```
-    API de yt-dlp funcionando!
+    yt-dlp API is running!
     ```
 
 ### `POST /api/video-info`
 
-  * **Descripción**: Obtiene información detallada de un video.
-  * **Cuerpo de la Solicitud (JSON)**:
+  * **Description**: Retrieves detailed information about a video.
+  * **Request Body (JSON)**:
     ```json
     {
         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     }
     ```
-  * **Respuesta Exitosa (JSON)**:
+  * **Success Response (JSON)**:
     ```json
     {
         "id": "dQw4w9WgXcQ",
@@ -97,76 +97,76 @@ La API expone los siguientes endpoints:
         "duration": 212,
         "uploader": "Rick Astley",
         "formats": [
-            { /* ... detalles del formato ... */ },
-            { /* ... más formatos ... */ }
+            { /* ... format details ... */ },
+            { /* ... more formats ... */ }
         ],
         "...": "..."
     }
     ```
-  * **Errores Posibles**: `400 Bad Request` (URL faltante), `500 Internal Server Error` (Error de `yt-dlp` o del servidor).
+  * **Possible Errors**: `400 Bad Request` (missing URL), `500 Internal Server Error` (`yt-dlp` or server error).
 
 ### `POST /api/download`
 
-  * **Descripción**: Inicia la descarga de un video con audio, respetando el límite de tamaño y el formato (MP4/WebM).
-  * **Cuerpo de la Solicitud (JSON)**:
+  * **Description**: Initiates the download of a video with audio, respecting the size limit and desired format (MP4/WebM).
+  * **Request Body (JSON)**:
     ```json
     {
         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        // "format": "best" // Opcional, pero la API selecciona automáticamente para cumplir límites.
+        // "format": "best" // Optional; the API automatically selects to meet limits.
     }
     ```
-  * **Respuesta Exitosa (JSON)**:
+  * **Success Response (JSON)**:
     ```json
     {
-        "message": "Descarga iniciada y completada con éxito.",
-        "filePath": "/ruta/en/servidor/downloads/video_id_1678888888888.mp4",
+        "message": "Download initiated and completed successfully.",
+        "filePath": "/server/path/to/downloads/video_id_1678888888888.mp4",
         "downloadUrl": "/downloads/video_id_1678888888888.mp4",
         "estimatedSizeMB": 15,
         "formatUsed": "bestvideo+bestaudio",
         "muxedByFFmpeg": true
     }
     ```
-    El `downloadUrl` es relativo a la raíz de la API y puede ser usado para que un cliente descargue el archivo directamente.
-  * **Errores Posibles**:
-      * `400 Bad Request` (URL faltante).
-      * `413 Payload Too Large` (El video, incluso en su formato más pequeño o combinado, excede el `maxDownloadSizeMB`).
-      * `500 Internal Server Error` (Errores de `yt-dlp`, `FFmpeg` no encontrado, o problemas internos).
-      * `503 Service Unavailable` / `504 Gateway Timeout` (La solicitud excedió el tiempo de espera del servidor o la descarga de `yt-dlp` tardó demasiado).
+    The `downloadUrl` is relative to the API root and can be used by a client to directly download the file.
+  * **Possible Errors**:
+      * `400 Bad Request` (missing URL).
+      * `413 Payload Too Large` (the video, even in its smallest or combined format, exceeds `maxDownloadSizeMB`).
+      * `500 Internal Server Error` (`yt-dlp` errors, `FFmpeg` not found, or internal issues).
+      * `503 Service Unavailable` / `504 Gateway Timeout` (the request exceeded the server's timeout or the `yt-dlp` download took too long).
 
 -----
 
-## 🛠️ Configuración
+## 🛠️ Configuration
 
-Puedes configurar la API pasando un objeto de configuración al constructor de la clase `YoutubeDLPApi` en `index.ts` (o tu archivo principal).
+You can configure the API by passing a configuration object to the `YoutubeDLPApi` class constructor in `index.ts` (or your main file).
 
 ```typescript
 const api = new YoutubeDLPApi({
-    port: 3005,                     // Puerto donde la API escuchará (por defecto: 3005)
-    timeout: 15 * 1000,             // Timeout de respuesta para todas las solicitudes en ms (por defecto: 15000 ms = 15s)
-    downloadDir: path.join(__dirname, '..', 'downloads'), // Directorio de descargas (por defecto: `../downloads`)
-    fileRetentionTimeSeconds: 3600, // Tiempo que un archivo se mantiene antes de ser eliminado en segundos (por defecto: 3600s = 1 hora)
-    cleanUpIntervalSeconds: 600,    // Frecuencia con la que se ejecuta la tarea de limpieza en segundos (por defecto: 600s = 10 minutos)
-    maxDownloadSizeMB: 100          // Tamaño máximo de los videos a descargar en MB (por defecto: 100 MB)
+    port: 3005,                     // Port where the API will listen (default: 3005)
+    timeout: 15 * 1000,             // Response timeout for all requests in ms (default: 15000 ms = 15s)
+    downloadDir: path.join(__dirname, '..', 'downloads'), // Download directory (default: `../downloads`)
+    fileRetentionTimeSeconds: 3600, // Time a file is kept before being deleted in seconds (default: 3600s = 1 hour)
+    cleanUpIntervalSeconds: 600,    // Frequency at which the cleanup task runs in seconds (default: 600s = 10 minutes)
+    maxDownloadSizeMB: 100          // Maximum size of videos to download in MB (default: 100 MB)
 });
 api.start();
 ```
 
 -----
 
-## 🧹 Limpieza Automática de Archivos
+## 🧹 Automatic File Cleanup
 
-La API incluye un proceso de limpieza que se ejecuta periódicamente (cada `cleanUpIntervalSeconds`) y elimina los archivos descargados del directorio `downloads` que sean más antiguos que `fileRetentionTimeSeconds`. Esto ayuda a gestionar el espacio en disco.
-
------
-
-## 🤝 Contribuciones
-
-¡Las contribuciones son bienvenidas\! Si tienes ideas para mejoras, reportes de errores o deseas añadir nuevas funcionalidades, no dudes en abrir un *issue* o enviar un *pull request*.
+The API includes a cleanup process that runs periodically (every `cleanUpIntervalSeconds`) and deletes downloaded files from the `downloads` directory that are older than `fileRetentionTimeSeconds`. This helps manage disk space.
 
 -----
 
-## 📄 Licencia
+## 🤝 Contributions
 
-Este proyecto está bajo la licencia [MIT](https://opensource.org/licenses/MIT).
+Contributions are welcome\! If you have ideas for improvements, bug reports, or want to add new features, feel free to open an issue or submit a pull request.
+
+-----
+
+## 📄 License
+
+This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
 
 -----
