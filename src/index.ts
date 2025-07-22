@@ -394,7 +394,7 @@ class YoutubeDLPApi {
 // Class Usage:
 const api = new YoutubeDLPApi({
     port: 3005,
-    timeout: 15 * 1000,
+    timeout: 30 * 1000,
     fileRetentionTimeSeconds: 3600,
     cleanUpIntervalSeconds: 600,
     maxDownloadSizeMB: 100
