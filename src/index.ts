@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import http from 'http';
+import os from 'os'; // <--- NUEVO: Importado para detectar el S.O.
 
 const execPromise = promisify(exec);
 
@@ -31,15 +32,35 @@ class YoutubeDLPApi {
     constructor(config?: ApiConfig) {
         this.app = express();
         this.port = config?.port || 3005;
-        this.downloadDir = config?.downloadDir || path.join(__dirname, '..', 'downloads');
+        this.downloadDir = config?.downloadDir || this.getDefaultDownloadPath();
         this.timeout = config?.timeout || 15 * 1000; // 15 seconds
-        this.fileRetentionTimeMs = (config?.fileRetentionTimeSeconds || 3600) * 1000; // Default to 1 hour
-        this.cleanUpIntervalMs = (config?.cleanUpIntervalSeconds || 600) * 1000; // Default to 10 minutes
-        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024; // Default to 100 MB
+        this.fileRetentionTimeMs = (config?.fileRetentionTimeSeconds || 3600) * 1000;
+        this.cleanUpIntervalMs = (config?.cleanUpIntervalSeconds || 600) * 1000;
+        this.maxDownloadSizeBytes = (config?.maxDownloadSizeMB || 100) * 1024 * 1024;
 
         this.configureMiddleware();
         this.setupRoutes();
         this.ensureDownloadDirectoryExists();
+    }
+
+    private getDefaultDownloadPath(): string {
+        const platform = os.platform();
+        console.log(`Detected platform: ${platform}`);
+
+        switch (platform) {
+            case 'win32': // Windows
+                // Usa la carpeta AppData/Local, que es el lugar estándar para caché.
+                const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+                return path.join(localAppData, 'yt-dlp-api-cache');
+
+            case 'linux': // Linux
+                // Ruta especificada para sistemas Linux. Requiere permisos.
+                return '/var/lib/yt-dlp-api';
+
+            default: // macOS y otros
+                // Usa una carpeta oculta en el directorio de inicio del usuario.
+                return path.join(os.homedir(), '.yt-dlp-api-cache');
+        }
     }
 
     private configureMiddleware(): void {
@@ -49,9 +70,16 @@ class YoutubeDLPApi {
     }
 
     private ensureDownloadDirectoryExists(): void {
-        if (!fs.existsSync(this.downloadDir)) {
-            fs.mkdirSync(this.downloadDir, { recursive: true });
-            console.log(`Download directory created: ${this.downloadDir}`);
+        try {
+            if (!fs.existsSync(this.downloadDir)) {
+                fs.mkdirSync(this.downloadDir, { recursive: true });
+                console.log(`Download directory created: ${this.downloadDir}`);
+            }
+        } catch (error: any) {
+            console.error(`FATAL: Could not create download directory at ${this.downloadDir}.`);
+            console.error(`Please check permissions. On Linux, you may need to run 'sudo mkdir -p ${this.downloadDir}' and 'sudo chown -R $USER:$USER ${this.downloadDir}'.`);
+            console.error('Error details:', error.message);
+            process.exit(1); // Sale de la aplicación si no se puede crear la carpeta
         }
     }
 
@@ -235,8 +263,6 @@ class YoutubeDLPApi {
         // --- Start Download and/or Muxing ---
         const sanitizedUrl = url.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
         const timestamp = Date.now();
-        // The output file name should be MP4 by default for muxing.
-        // If you need WebM, you might need more complex logic or for the client to request it.
         const outputFileName = `${sanitizedUrl}_${timestamp}.mp4`;
         const outputPath = path.join(this.downloadDir, outputFileName);
 
@@ -246,13 +272,7 @@ class YoutubeDLPApi {
             url
         ];
 
-        // If muxing is required, yt-dlp will automatically use ffmpeg if it's in the PATH
-        // and a combined format (e.g., 'bestvideo+bestaudio') is requested.
-        // We don't need to invoke ffmpeg directly here; yt-dlp handles it for us.
-        // We just need to ensure ffmpeg is available to yt-dlp.
-
         const ytDlpProcess = spawn('yt-dlp', ytDlpArgs);
-
         let stderrOutput = '';
 
         ytDlpProcess.stdout.on('data', (data) => {
@@ -302,7 +322,6 @@ class YoutubeDLPApi {
             clearTimeout(downloadTimeout);
             if (!res.headersSent) {
                 console.error('Error executing yt-dlp:', err);
-                // If the error is specifically about ffmpeg (e.g., not found), provide a more helpful message
                 if (err.message.includes('ffmpeg') && err.message.includes('not found')) {
                     res.status(500).json({
                         error: 'Error: FFmpeg not found. Ensure FFmpeg is installed and in your PATH to download videos with audio.',
@@ -359,6 +378,7 @@ class YoutubeDLPApi {
             console.log(`File retention time: ${this.fileRetentionTimeMs / 1000 / 60} minutes.`);
             console.log(`Cleanup interval: ${this.cleanUpIntervalMs / 1000 / 60} minutes.`);
             console.log(`Download size limit: ${this.maxDownloadSizeBytes / (1024 * 1024)} MB.`);
+            console.log(`Downloads will be saved to: ${this.downloadDir}`);
         });
 
         this.server.timeout = this.timeout;
@@ -387,9 +407,8 @@ class YoutubeDLPApi {
             console.log('File cleanup timer stopped.');
         }
     }
-}
 
-// ---
+}
 
 // Class Usage:
 const api = new YoutubeDLPApi({
